@@ -1,0 +1,141 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: payments-config
+data:
+  DB_HOST: mysql-payments
+  DB_PORT: "3306"
+  DB_NAME: labo05_payments_db
+  DB_USER: labo05
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: payments-db-secret
+type: Opaque
+stringData:
+  DB_PASSWORD: labo05
+  MYSQL_ROOT_PASSWORD: root
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mysql-payments-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql-payments
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: mysql-payments
+  template:
+    metadata:
+      labels:
+        app: mysql-payments
+    spec:
+      containers:
+        - name: mysql-payments
+          image: mysql:8.4.7
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: payments-db-secret
+                  key: MYSQL_ROOT_PASSWORD
+            - name: MYSQL_DATABASE
+              value: labo05_payments_db
+            - name: MYSQL_USER
+              value: labo05
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: payments-db-secret
+                  key: DB_PASSWORD
+          ports:
+            - containerPort: 3306
+          readinessProbe:
+            tcpSocket:
+              port: 3306
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          volumeMounts:
+            - name: mysql-data
+              mountPath: /var/lib/mysql
+            - name: payments-db-init
+              mountPath: /docker-entrypoint-initdb.d
+      volumes:
+        - name: mysql-data
+          persistentVolumeClaim:
+            claimName: mysql-payments-pvc
+        - name: payments-db-init
+          configMap:
+            name: payments-db-init
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-payments
+spec:
+  selector:
+    app: mysql-payments
+  ports:
+    - port: 3306
+      targetPort: 3306
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payments-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: payments-api
+  template:
+    metadata:
+      labels:
+        app: payments-api
+    spec:
+      containers:
+        - name: payments-api
+          image: ghcr.io/picodoux/log430-labo5-payment:latest
+          imagePullPolicy: Always
+          envFrom:
+            - configMapRef:
+                name: payments-config
+          env:
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: payments-db-secret
+                  key: DB_PASSWORD
+          ports:
+            - containerPort: 5009
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: payments-api
+spec:
+  selector:
+    app: payments-api
+  ports:
+    - port: 5009
+      targetPort: 5009
